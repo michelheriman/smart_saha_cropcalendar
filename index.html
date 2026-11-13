@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Crop Calendar</title>
+<style>
+  :root { --bg:#fafaf7; --fg:#1d2b24; --muted:#66756d; --line:#dfe4de; --card:#fff;
+          --S:#2e8b57; --s:#a8d5b8; --H:#e59a2f; --g:#d4dfe8; --B:#c2589b; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--fg); }
+  header { padding:20px 24px 8px; } h1 { margin:0 0 4px; font-size:22px; }
+  header p { margin:0; color:var(--muted); }
+  form, .panel { background:var(--card); border:1px solid var(--line); border-radius:10px; margin:12px 24px; padding:14px 16px; }
+  .row { display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end; }
+  label { display:flex; flex-direction:column; font-size:12px; color:var(--muted); gap:3px; }
+  input, select, button { font:inherit; padding:6px 8px; border:1px solid var(--line); border-radius:6px; background:#fff; }
+  input[type=number] { width:110px; }
+  button { cursor:pointer; background:var(--S); color:#fff; border-color:var(--S); }
+  button.sec { background:#fff; color:var(--fg); border-color:var(--line); }
+  button:disabled { opacity:.5; cursor:wait; }
+  details { margin-top:10px; } summary { cursor:pointer; color:var(--muted); }
+  textarea { width:100%; min-height:60px; font:12px ui-monospace,monospace; }
+  #crops { display:flex; flex-wrap:wrap; gap:4px 12px; margin-top:6px; }
+  #crops label { flex-direction:row; align-items:center; color:var(--fg); font-size:13px; gap:4px; }
+  #msg { margin:8px 24px; } .err { color:#b3261e; } 
+  table { border-collapse:collapse; width:100%; font-size:13px; }
+  th, td { padding:4px 6px; border-bottom:1px solid var(--line); text-align:left; vertical-align:middle; }
+  th { font-weight:600; color:var(--muted); font-size:12px; }
+  td.m { width:44px; text-align:center; font-weight:600; font-size:12px; border-left:1px solid #fff; color:#fff; }
+  td.m.e { background:#f3f5f2; }
+  td.m.S { background:var(--S); } td.m.s { background:var(--s); color:#12301f; }
+  td.m.H { background:var(--H); } td.m.g { background:var(--g); color:#35506a; }
+  td.m.SH { background:linear-gradient(90deg,var(--S) 50%,var(--H) 50%); }
+  td.m.sH { background:linear-gradient(90deg,var(--s) 50%,var(--H) 50%); }
+  td.m.B, td.m.BH, td.m.SB { background:var(--B); }
+  .pill { display:inline-block; padding:1px 8px; border-radius:10px; font-size:11px; color:#fff; }
+  .suitable { background:var(--S); } .marginal { background:var(--H); } .not_suitable { background:#9aa6a0; }
+  .legend span { display:inline-flex; align-items:center; gap:4px; margin-right:14px; font-size:12px; color:var(--muted); }
+  .legend i { width:14px; height:14px; border-radius:3px; display:inline-block; }
+  .small { color:var(--muted); font-size:12px; }
+  .scroll { overflow-x:auto; }
+  tr.crop:hover { background:#f4f7f3; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Crop calendar from coordinates</h1>
+  <p>Agro-climatic sowing and harvest windows for 37 crops, computed from daily climatology at your location.</p>
+</header>
+
+<form id="f">
+  <div class="row">
+    <label>Latitude <input type="number" step="any" id="lat" min="-90" max="90" required value="45.0"></label>
+    <label>Longitude <input type="number" step="any" id="lon" min="-180" max="180" required value="5.0"></label>
+    <label>Elevation (m, optional) <input type="number" step="any" id="elev" placeholder="auto"></label>
+    <label>Climate source
+      <select id="source">
+        <option value="nasa_power">NASA POWER</option>
+        <option value="open_meteo">Open-Meteo (ERA5)</option>
+        <option value="synthetic">Synthetic (offline demo)</option>
+      </select></label>
+    <label>Water supply
+      <select id="irr"><option value="false">Rainfed</option><option value="true">Irrigated</option></select></label>
+    <label>First month shown
+      <select id="sm"></select></label>
+    <button type="button" class="sec" id="geo">Use my location</button>
+    <button type="submit" id="go">Compute</button>
+  </div>
+  <details>
+    <summary>Crops and parameter overrides</summary>
+    <div class="small" style="margin-top:6px">
+      <a href="#" id="all">all</a> / <a href="#" id="none">none</a></div>
+    <div id="crops"></div>
+    <p class="small">Parameter overrides (JSON), e.g. <code>{"maize":{"gdd":1700},"onion":{"dl_min":11}}</code></p>
+    <textarea id="ov" placeholder="{}"></textarea>
+  </details>
+</form>
+
+<div id="msg"></div>
+<div id="out" style="display:none">
+  <div class="panel" id="climate"></div>
+  <div class="panel">
+    <div class="legend" style="margin-bottom:8px">
+      <span><i style="background:var(--S)"></i>S recommended sowing</span>
+      <span><i style="background:var(--s)"></i>s acceptable sowing</span>
+      <span><i style="background:var(--H)"></i>H harvest</span>
+      <span><i style="background:var(--g)"></i>g growing</span>
+      <span><i style="background:var(--B)"></i>B budbreak / bloom (perennials)</span>
+      <a href="#" id="csv" style="margin-left:auto">Download CSV</a>
+    </div>
+    <div class="scroll"><table id="cal"></table></div>
+    <p class="small" id="disc"></p>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const MN = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+let CROPS = [];   // loaded from /api/crops so the list always matches the server
+
+MN.forEach((m,i)=>{ const o=document.createElement("option"); o.value=i+1; o.textContent=m; $("sm").appendChild(o); });
+fetch("/api/crops").then(r=>r.json()).then(d=>{
+  CROPS = Object.keys(d);
+  CROPS.forEach(c=>{
+    const l=document.createElement("label"), i=document.createElement("input");
+    i.type="checkbox"; i.value=c; i.checked=true; l.append(i, document.createTextNode(c)); $("crops").appendChild(l);
+  });
+}).catch(()=>{ $("crops").textContent="Crop list unavailable (all crops are computed by default)."; });
+$("all").onclick = e=>{e.preventDefault(); document.querySelectorAll("#crops input").forEach(i=>i.checked=true);};
+$("none").onclick = e=>{e.preventDefault(); document.querySelectorAll("#crops input").forEach(i=>i.checked=false);};
+$("geo").onclick = ()=>navigator.geolocation && navigator.geolocation.getCurrentPosition(p=>{
+  $("lat").value=p.coords.latitude.toFixed(4); $("lon").value=p.coords.longitude.toFixed(4);
+}, ()=>{ $("msg").innerHTML='<span class="err">Geolocation unavailable.</span>'; });
+
+function qs(){
+  const p = new URLSearchParams({lat:$("lat").value, lon:$("lon").value, source:$("source").value,
+    irrigated:$("irr").value, start_month:$("sm").value});
+  if ($("elev").value) p.set("elevation", $("elev").value);
+  const sel=[...document.querySelectorAll("#crops input:checked")].map(i=>i.value);
+  if (sel.length && sel.length<CROPS.length) p.set("crops", sel.join(","));
+  if ($("ov").value.trim()) p.set("overrides", $("ov").value.trim());
+  return p.toString();
+}
+const el=(t,cls,txt)=>{const e=document.createElement(t); if(cls)e.className=cls; if(txt!==undefined)e.textContent=txt; return e;};
+
+$("f").onsubmit = async ev => {
+  ev.preventDefault(); $("go").disabled=true; $("msg").textContent="Fetching climate and simulating… (first request for a location can take 10-60 s)";
+  try {
+    const r = await fetch("/api/calendar?"+qs()); const d = await r.json();
+    if(!r.ok) throw new Error(d.error||r.statusText);
+    render(d); $("msg").textContent=""; $("out").style.display="block";
+    $("csv").href="/api/calendar.csv?"+qs();
+  } catch(e){ $("msg").innerHTML=""; const s=el("span","err","Error: "+e.message); $("msg").appendChild(s); }
+  $("go").disabled=false;
+};
+
+function render(d){
+  const cl=d.climate, a=cl.annual, m=cl.meta;
+  const box=$("climate"); box.replaceChildren();
+  box.appendChild(el("div","small",
+    `Source: ${m.source} · ${m.n_years} years (${m.y0}-${m.y1}) · grid elevation ${m.grid_elevation_m??"n/a"} m`+
+    (m.site_elevation_m!=null?` · site ${m.site_elevation_m} m (lapse correction ${m.lapse_correction_c} °C)`:"")+
+    ` · Tmean ${a.tmean} °C · rain ${a.precip_mm} mm/yr · ET0 ${a.et0_mm} mm/yr · days/yr with frost risk (P10 Tmin<0 °C): ${a.frost_risk_days}`));
+  const t=el("table"), hr=t.insertRow(); hr.appendChild(el("th","","Month"));
+  d.calendar.months.forEach(x=>hr.appendChild(el("th","",x)));
+  const rows=[["Tmean °C","tmean",1],["Tmax °C","tmax",1],["Tmin °C","tmin",1],["Rain mm","precip_mm",0],["ET0 mm","et0_mm",0]];
+  rows.forEach(([n,k,dp])=>{const r=t.insertRow(); r.appendChild(el("th","",n));
+    cl.monthly.forEach(v=>r.appendChild(el("td","",v[k].toFixed(dp))));});
+  box.appendChild(t);
+
+  const tb=$("cal"); tb.replaceChildren();
+  const h=tb.insertRow();
+  ["Crop","Status","Best sowing","Sowing window","Harvest window","Cycle (d)"].forEach(x=>h.appendChild(el("th","",x)));
+  d.calendar.months.forEach(x=>h.appendChild(el("th","",x)));
+  d.calendar.crops.forEach(c=>{
+    const r=tb.insertRow(); r.className="crop";
+    const nm=r.insertCell(); nm.appendChild(el("b","",c.crop));
+    const title=[c.note, c.reason, JSON.stringify(c.limiting_factors), JSON.stringify(c.phenology)].filter(x=>x&&x!=="{}").join(" | ");
+    r.title=title;
+    const st=r.insertCell(); st.appendChild(el("span","pill "+c.status,c.status.replace("_"," ")));
+    r.insertCell().textContent=c.best_sowing||"-";
+    r.insertCell().textContent=c.sowing_window.join(", ")||(c.reason||"-");
+    r.insertCell().textContent=c.harvest_window.join(", ")||"-";
+    r.insertCell().textContent=c.cycle_days??"-";
+    c.months.forEach(mo=>{const cell=r.insertCell(); cell.className="m "+(mo.code.replace(/[^SsHgB]/g,"")||"e"); cell.textContent=mo.code;});
+  });
+  $("disc").textContent=d.disclaimer+" Hover a row for notes, limiting factors and phenology.";
+}
+</script>
+</body>
+</html>
